@@ -1,78 +1,68 @@
 import os
-import re
-import random
-import aiofiles
 import aiohttp
+import aiofiles
+from PIL import Image, ImageDraw, ImageFont
+from youtubesearchpython import VideosSearch
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
-from unidecode import unidecode
-from youtubesearchpython.__future__ import VideosSearch
+async def get_video_data(video_id):
+    results = VideosSearch(video_id, limit=1)
+    data = (await results.next())["result"][0]
+    return {
+        "title": data.get("title", "Unknown Title"),
+        "channel": data.get("channel", {}).get("name", "Unknown Channel"),
+        "thumbnail": data["thumbnails"][0]["url"].split("?")[0],
+        "duration": data.get("duration", "0:00")
+    }
 
-from EsproMusic import app
-from config import YOUTUBE_IMG_URL
+async def generate_pink_card(video_id, bot_name="Meka Bots"):
+    data = await get_video_data(video_id)
+    title, channel, duration, thumb_url = data["title"], data["channel"], data["duration"], data["thumbnail"]
 
+    base = Image.new("RGB", (768, 768), "#fdb4d9")
+    card = Image.new("RGBA", (700, 250), (255, 255, 255, 20))
+    card_draw = ImageDraw.Draw(card)
 
-def changeImageSize(maxWidth, maxHeight, image):
-    widthRatio = maxWidth / image.size[0]
-    heightRatio = maxHeight / image.size[1]
-    newWidth = int(widthRatio * image.size[0])
-    newHeight = int(heightRatio * image.size[1])
-    return image.resize((newWidth, newHeight))
+    font_title = ImageFont.truetype("arial.ttf", 40)
+    font_channel = ImageFont.truetype("arial.ttf", 30)
+    font_bot = ImageFont.truetype("arial.ttf", 28)
 
+    # Download and paste thumbnail
+    async with aiohttp.ClientSession() as session:
+        async with session.get(thumb_url) as resp:
+            if resp.status == 200:
+                f = await aiofiles.open(f"{video_id}.jpg", mode="wb")
+                await f.write(await resp.read())
+                await f.close()
 
-def clear(text):
-    words = text.split(" ")
-    title = ""
-    for word in words:
-        if len(title) + len(word) < 60:
-            title += " " + word
-    return title.strip()
+    thumb = Image.open(f"{video_id}.jpg").resize((100, 100)).convert("RGBA")
+    card.paste(thumb, (20, 20))
 
+    # Add song title and channel name
+    card_draw.text((140, 30), title[:40], font=font_title, fill="white")
+    card_draw.text((140, 90), channel, font=font_channel, fill="white")
 
-async def get_thumb(videoid):
-    path = f"cache/{videoid}.png"
-    if os.path.isfile(path):
-        return path
+    # Music progress bar
+    card_draw.text((20, 150), "0:24", font=font_channel, fill="white")
+    card_draw.text((600, 150), duration, font=font_channel, fill="white")
+    card_draw.rectangle((100, 160, 580, 170), fill="white")
 
-    try:
-        url = f"https://www.youtube.com/watch?v={videoid}"
-        results = VideosSearch(url, limit=1)
-        result = (await results.next())["result"][0]
+    # Play/pause/skip buttons (simplified)
+    card_draw.text((300, 190), "◄   ❚❚   ►", font=font_channel, fill="white")
 
-        title = re.sub("\W+", " ", result.get("title", "Unsupported Title")).title()
-        duration = result.get("duration", "Unknown Mins")
-        thumbnail_url = result["thumbnails"][0]["url"].split("?")[0]
-        views = result.get("viewCount", {}).get("short", "Unknown Views")
-        channel = result.get("channel", {}).get("name", "Unknown Channel")
+    # Paste card onto base
+    base.paste(card, (30, 300), card)
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(thumbnail_url) as resp:
-                if resp.status == 200:
-                    async with aiofiles.open(f"cache/thumb{videoid}.png", "wb") as f:
-                        await f.write(await resp.read())
+    # Add bot name at bottom
+    draw_base = ImageDraw.Draw(base)
+    w, _ = draw_base.textsize(bot_name, font=font_bot)
+    draw_base.text(((768 - w) // 2, 720), bot_name, font=font_bot, fill="white")
 
-        youtube_img = Image.open(f"cache/thumb{videoid}.png").convert("RGB")
-        os.remove(f"cache/thumb{videoid}.png")
+    # Save image
+    out_path = f"{video_id}_pink.png"
+    base.save(out_path)
+    os.remove(f"{video_id}.jpg")
+    return out_path
 
-        # Resize and add border
-        resized = changeImageSize(1280, 720, youtube_img)
-        enhanced = ImageEnhance.Brightness(resized).enhance(1.1)
-        contrasted = ImageEnhance.Contrast(enhanced).enhance(1.1)
-        bordered = ImageOps.expand(contrasted, border=20, fill="pink")
-
-        # Add text
-        draw = ImageDraw.Draw(bordered)
-        title_font = ImageFont.truetype("EsproMusic/assets/font.ttf", 50)
-        small_font = ImageFont.truetype("EsproMusic/assets/font2.ttf", 40)
-
-        draw.text((40, 600), clear(title), font=title_font, fill="white")
-        draw.text((40, 660), f"{channel} • {views}", font=small_font, fill="white")
-        draw.text((1080, 20), unidecode(app.name), font=small_font, fill="white")
-        draw.text((1100, 660), f"{duration}", font=small_font, fill="white")
-
-        bordered.save(path)
-        return path
-
-    except Exception as e:
-        print(f"Thumbnail error: {e}")
-        return YOUTUBE_IMG_URL
+# Example usage
+# import asyncio
+# asyncio.run(generate_pink_card("Ks-_Mh1QhMc"))  # Replace with your video ID
