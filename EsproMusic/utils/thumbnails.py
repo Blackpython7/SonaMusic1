@@ -1,73 +1,99 @@
 import os
-import aiohttp
+import re
 import aiofiles
-from PIL import Image, ImageDraw, ImageFont
-from youtubesearchpython import VideosSearch
+import aiohttp
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+from youtubesearchpython.future import VideosSearch
+from config import YOUTUBE_IMG_URL
 
-async def get_thumb(video_id):
-    results = VideosSearch(video_id, limit=1)
-    data = (await results.next())["result"][0]
-    title = data.get("title", "Unknown Title")
-    channel = data.get("channel", {}).get("name", "Unknown Channel")
-    thumb_url = data["thumbnails"][0]["url"].split("?")[0]
-    duration = data.get("duration", "0:00")
 
-    # Download thumbnail
-    async with aiohttp.ClientSession() as session:
-        async with session.get(thumb_url) as resp:
-            if resp.status == 200:
-                f = await aiofiles.open(f"{video_id}.jpg", mode="wb")
-                await f.write(await resp.read())
-                await f.close()
+def clear(text):
+    words = text.split(" ")
+    title = ""
+    for word in words:
+        if len(title) + len(word) < 60:
+            title += " " + word
+    return title.strip()
 
-    # Canvas
-    width, height = 768, 500
-    bg_color = (255, 182, 193)  # Baby pink
-    base = Image.new("RGB", (width, height), bg_color)
 
-    # Thumbnail image
-    thumb = Image.open(f"{video_id}.jpg").resize((120, 120)).convert("RGBA")
-    thumb_box = Image.new("RGBA", (130, 130), "white")
-    thumb_box.paste(thumb, (5, 5), thumb)
-    base.paste(thumb_box, (40, 40), thumb_box)
+def load_font(path, size):
+    try:
+        return ImageFont.truetype(path, size)
+    except:
+        return ImageFont.load_default()
 
-    # Fonts
-    font_title = ImageFont.truetype("arial.ttf", 32)
-    font_channel = ImageFont.truetype("arial.ttf", 24)
-    font_small = ImageFont.truetype("arial.ttf", 20)
-    font_bot = ImageFont.truetype("arial.ttf", 26)
 
-    draw = ImageDraw.Draw(base)
+async def get_thumb(videoid):
+    try:
+        if os.path.isfile(f"cache/{videoid}.png"):
+            return f"cache/{videoid}.png"
 
-    # Texts beside thumbnail
-    text_x = 190
-    draw.text((text_x, 50), title[:40], font=font_title, fill="black")
-    draw.text((text_x, 95), channel, font=font_channel, fill="black")
+        # Fetch video info
+        url = f"https://www.youtube.com/watch?v={videoid}"
+        results = VideosSearch(url, limit=1)
+        result = (await results.next())["result"][0]
 
-    # Progress bar
-    bar_y = 200
-    bar_x1, bar_x2 = 60, width - 60
-    bar_height = 12
-    draw.rectangle([bar_x1, bar_y, bar_x2, bar_y + bar_height], fill="#d3d3d3")
-    progress_width = int((bar_x2 - bar_x1) * 0.4)  # Static 40% for demo
-    draw.rectangle([bar_x1, bar_y, bar_x1 + progress_width, bar_y + bar_height], fill="#1DB954")
-    draw.text((bar_x2 + 5, bar_y - 4), duration, font=font_small, fill="black")
+        title = clear(re.sub(r"\W+", " ", result.get("title", "Unknown Title")).title())
+        channel = result.get("channel", {}).get("name", "Unknown Channel")
+        duration = result.get("duration", "0:00")
+        thumbnail = result["thumbnails"][0]["url"].split("?")[0]
 
-    # Spotify-style buttons (centered)
-    button_y = bar_y + 40
-    center_x = width // 2
+        # Download thumbnail
+        async with aiohttp.ClientSession() as session:
+            async with session.get(thumbnail) as resp:
+                if resp.status == 200:
+                    async with aiofiles.open(f"cache/thumb{videoid}.png", "wb") as f:
+                        await f.write(await resp.read())
 
-    # Pause button (two bars)
-    bar_w, bar_h = 8, 30
-    draw.rectangle([center_x - 20, button_y, center_x - 20 + bar_w, button_y + bar_h], fill="#1DB954")
-    draw.rectangle([center_x + 12, button_y, center_x + 12 + bar_w, button_y + bar_h], fill="#1DB954")
+        # Canvas
+        width, height = 768, 500
+        bg_color = (255, 182, 193)  # Baby pink
+        base = Image.new("RGB", (width, height), bg_color)
 
-    # Music Bot name at bottom
-    bot_text = "Music Bot"
-    w, _ = draw.textsize(bot_text, font=font_bot)
-    draw.text(((width - w) // 2, height - 50), bot_text, font=font_bot, fill="black")
+        # Thumbnail box
+        thumb = Image.open(f"cache/thumb{videoid}.png").resize((120, 120)).convert("RGBA")
+        thumb_box = Image.new("RGBA", (130, 130), "white")
+        thumb_box.paste(thumb, (5, 5), thumb)
+        base.paste(thumb_box, (40, 40), thumb_box)
 
-    out_path = f"cache/{video_id}_thumb.png"
-    base.save(out_path)
-    os.remove(f"{video_id}.jpg")
-    return out_path
+        # Fonts
+        font_title = load_font("EsproMusic/assets/font.ttf", 32)
+        font_channel = load_font("EsproMusic/assets/font2.ttf", 24)
+        font_small = load_font("EsproMusic/assets/font2.ttf", 20)
+        font_bot = load_font("EsproMusic/assets/font2.ttf", 24)
+
+        draw = ImageDraw.Draw(base)
+
+        # Title and Channel
+        draw.text((190, 50), title, font=font_title, fill="black")
+        draw.text((190, 90), channel, font=font_channel, fill="black")
+
+        # Progress bar
+        bar_y = 200
+        bar_x1, bar_x2 = 60, width - 60
+        bar_height = 12
+        draw.rectangle([bar_x1, bar_y, bar_x2, bar_y + bar_height], fill="#d3d3d3")
+        progress_width = int((bar_x2 - bar_x1) * 0.35)
+        draw.rectangle([bar_x1, bar_y, bar_x1 + progress_width, bar_y + bar_height], fill="#1DB954")
+        draw.text((bar_x2 + 5, bar_y - 4), duration, font=font_small, fill="black")
+
+        # Buttons
+        button_y = bar_y + 40
+        center_x = width // 2
+        draw.rectangle([center_x - 20, button_y, center_x - 12, button_y + 30], fill="#1DB954")
+        draw.rectangle([center_x + 12, button_y, center_x + 20, button_y + 30], fill="#1DB954")
+
+        # Music Bot text at bottom center
+        bot_text = "Music Bot"
+        w, _ = draw.textsize(bot_text, font=font_bot)
+        draw.text(((width - w) // 2, height - 40), bot_text, font=font_bot, fill="black")
+
+        # Save and clean up
+        out_path = f"cache/{videoid}.png"
+        base.save(out_path)
+        os.remove(f"cache/thumb{videoid}.png")
+        return out_path
+
+    except Exception as e:
+        print("Exception in get_thumb:", e)
+        return YOUTUBE_IMG_URL
