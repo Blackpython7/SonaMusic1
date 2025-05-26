@@ -1,89 +1,78 @@
 import os
 import re
-import aiohttp
+import random
 import aiofiles
-from PIL import Image, ImageDraw, ImageFont
+import aiohttp
+
+from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
 from unidecode import unidecode
 from youtubesearchpython.__future__ import VideosSearch
 
-FONT_BOLD = "EsproMusic/assets/font_bold.ttf"
-FONT_REGULAR = "EsproMusic/assets/font.ttf"
-CACHE_DIR = "cache"
+from EsproMusic import app
+from config import YOUTUBE_IMG_URL
 
-def clear_text(text):
-    return re.sub(r"\s+", " ", text).strip()
 
-def ensure_cache_dir():
-    if not os.path.exists(CACHE_DIR):
-        os.makedirs(CACHE_DIR)
+def changeImageSize(maxWidth, maxHeight, image):
+    widthRatio = maxWidth / image.size[0]
+    heightRatio = maxHeight / image.size[1]
+    newWidth = int(widthRatio * image.size[0])
+    newHeight = int(heightRatio * image.size[1])
+    return image.resize((newWidth, newHeight))
 
-async def get_video_data(video_id):
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    results = VideosSearch(url, limit=1)
-    result = (await results.next())["result"][0]
 
-    return {
-        "title": clear_text(result.get("title", "Unknown Title")),
-        "duration": result.get("duration", "0:00"),
-        "channel": result.get("channel", {}).get("name", "Unknown Channel"),
-        "thumbnail": result["thumbnails"][0]["url"].split("?")[0],
-    }
+def clear(text):
+    words = text.split(" ")
+    title = ""
+    for word in words:
+        if len(title) + len(word) < 60:
+            title += " " + word
+    return title.strip()
 
-async def download_image(url, path):
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            if resp.status == 200:
-                async with aiofiles.open(path, mode="wb") as f:
-                    await f.write(await resp.read())
 
-async def create_pink_thumb(video_id, bot_name="Meka Bots"):
-    ensure_cache_dir()
-    cached_file = f"{CACHE_DIR}/{video_id}_pink.png"
-    if os.path.isfile(cached_file):
-        return cached_file
+async def get_thumb(videoid):
+    path = f"cache/{videoid}.png"
+    if os.path.isfile(path):
+        return path
 
     try:
-        data = await get_video_data(video_id)
-        thumb_path = f"{CACHE_DIR}/thumb_{video_id}.jpg"
-        await download_image(data["thumbnail"], thumb_path)
+        url = f"https://www.youtube.com/watch?v={videoid}"
+        results = VideosSearch(url, limit=1)
+        result = (await results.next())["result"][0]
 
-        # Create base image
-        base = Image.new("RGB", (720, 720), "#f8cddc")
-        draw = ImageDraw.Draw(base)
+        title = re.sub("\W+", " ", result.get("title", "Unsupported Title")).title()
+        duration = result.get("duration", "Unknown Mins")
+        thumbnail_url = result["thumbnails"][0]["url"].split("?")[0]
+        views = result.get("viewCount", {}).get("short", "Unknown Views")
+        channel = result.get("channel", {}).get("name", "Unknown Channel")
 
-        # Load fonts
-        font_bold = ImageFont.truetype(FONT_BOLD, 36)
-        font_small = ImageFont.truetype(FONT_REGULAR, 24)
+        async with aiohttp.ClientSession() as session:
+            async with session.get(thumbnail_url) as resp:
+                if resp.status == 200:
+                    async with aiofiles.open(f"cache/thumb{videoid}.png", "wb") as f:
+                        await f.write(await resp.read())
 
-        # Paste video thumbnail
-        thumb = Image.open(thumb_path).resize((150, 150))
-        base.paste(thumb, (50, 50))
+        youtube_img = Image.open(f"cache/thumb{videoid}.png").convert("RGB")
+        os.remove(f"cache/thumb{videoid}.png")
 
-        # Text: Song title and channel name
-        draw.text((220, 60), unidecode(data["title"]), font=font_bold, fill="white")
-        draw.text((220, 110), unidecode(data["channel"]), font=font_small, fill="white")
+        # Resize and add border
+        resized = changeImageSize(1280, 720, youtube_img)
+        enhanced = ImageEnhance.Brightness(resized).enhance(1.1)
+        contrasted = ImageEnhance.Contrast(enhanced).enhance(1.1)
+        bordered = ImageOps.expand(contrasted, border=20, fill="pink")
 
-        # Progress bar
-        draw.rectangle([50, 230, 670, 250], fill="#f5a9c5")  # full bar
-        draw.rectangle([50, 230, 200, 250], fill="white")  # current progress
-        draw.text((50, 260), "0:24", font=font_small, fill="white")
-        draw.text((620, 260), data["duration"], font=font_small, fill="white")
+        # Add text
+        draw = ImageDraw.Draw(bordered)
+        title_font = ImageFont.truetype("EsproMusic/assets/font.ttf", 50)
+        small_font = ImageFont.truetype("EsproMusic/assets/font2.ttf", 40)
 
-        # Media controls
-        controls = ["⏮", "⏸", "⏭"]
-        x = 270
-        for icon in controls:
-            draw.text((x, 320), icon, font=font_bold, fill="white")
-            x += 80
+        draw.text((40, 600), clear(title), font=title_font, fill="white")
+        draw.text((40, 660), f"{channel} • {views}", font=small_font, fill="white")
+        draw.text((1080, 20), unidecode(app.name), font=small_font, fill="white")
+        draw.text((1100, 660), f"{duration}", font=small_font, fill="white")
 
-        # Bot name
-        draw.text((250, 670), bot_name, font=font_small, fill="white")
-
-        # Save and clean
-        base.save(cached_file)
-        os.remove(thumb_path)
-        return cached_file
+        bordered.save(path)
+        return path
 
     except Exception as e:
-        print(f"Error: {e}")
-        return "fallback.png"  # or default image path
+        print(f"Thumbnail error: {e}")
+        return YOUTUBE_IMG_URL
