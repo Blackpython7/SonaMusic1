@@ -3,7 +3,7 @@ import re
 import aiofiles
 import aiohttp
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-from youtubesearchpython.future import VideosSearch
+from youtubesearchpython import VideosSearch  # <- Correct import
 from config import YOUTUBE_IMG_URL
 
 
@@ -25,12 +25,12 @@ def load_font(path, size):
 
 async def get_thumb(videoid):
     try:
-        if os.path.isfile(f"cache/{videoid}.png"):
-            return f"cache/{videoid}.png"
+        out_path = f"cache/{videoid}.png"
+        if os.path.isfile(out_path):
+            return out_path
 
-        # Fetch video info
-        url = f"https://www.youtube.com/watch?v={videoid}"
-        results = VideosSearch(url, limit=1)
+        # Search YouTube
+        results = VideosSearch(videoid, limit=1)
         result = (await results.next())["result"][0]
 
         title = clear(re.sub(r"\W+", " ", result.get("title", "Unknown Title")).title())
@@ -45,12 +45,11 @@ async def get_thumb(videoid):
                     async with aiofiles.open(f"cache/thumb{videoid}.png", "wb") as f:
                         await f.write(await resp.read())
 
-        # Canvas
+        # Create base image
         width, height = 768, 500
-        bg_color = (255, 182, 193)  # Baby pink
-        base = Image.new("RGB", (width, height), bg_color)
+        base = Image.new("RGB", (width, height), (255, 182, 193))  # Baby pink
 
-        # Thumbnail box
+        # Add square thumbnail
         thumb = Image.open(f"cache/thumb{videoid}.png").resize((120, 120)).convert("RGBA")
         thumb_box = Image.new("RGBA", (130, 130), "white")
         thumb_box.paste(thumb, (5, 5), thumb)
@@ -64,7 +63,7 @@ async def get_thumb(videoid):
 
         draw = ImageDraw.Draw(base)
 
-        # Title and Channel
+        # Title + Channel
         draw.text((190, 50), title, font=font_title, fill="black")
         draw.text((190, 90), channel, font=font_channel, fill="black")
 
@@ -83,17 +82,15 @@ async def get_thumb(videoid):
         draw.rectangle([center_x - 20, button_y, center_x - 12, button_y + 30], fill="#1DB954")
         draw.rectangle([center_x + 12, button_y, center_x + 20, button_y + 30], fill="#1DB954")
 
-        # Music Bot text at bottom center
-        bot_text = "Music Bot"
+        # Footer: Music Bot Name
+        bot_text = "Meka Bots"
         w, _ = draw.textsize(bot_text, font=font_bot)
         draw.text(((width - w) // 2, height - 40), bot_text, font=font_bot, fill="black")
 
-        # Save and clean up
-        out_path = f"cache/{videoid}.png"
         base.save(out_path)
         os.remove(f"cache/thumb{videoid}.png")
         return out_path
 
     except Exception as e:
-        print("Exception in get_thumb:", e)
+        print("Thumbnail Error:", e)
         return YOUTUBE_IMG_URL
